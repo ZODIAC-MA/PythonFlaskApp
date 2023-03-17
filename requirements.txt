@@ -2,5 +2,5 @@ Flask<1
 gunicorn
 Pysocks
 dnspython
-smtplib
+secure-smtplib
 email_split
