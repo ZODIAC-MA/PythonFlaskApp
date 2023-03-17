@@ -1,2 +1,7 @@
 Flask<1
 gunicorn
+Pysocks
+dnspython
+socket
+smtplib
+email_split
