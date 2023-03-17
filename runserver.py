@@ -12,11 +12,15 @@
 #############################################
 
 #imports
-from flask import Flask
-from flask import request
-from flask import make_response
-from flask import render_template
-
+from flask import Flask, request, jsonify
+import re, socks
+import dns
+from dns import resolver
+import socket
+import smtplib
+import time
+import random
+from email_split import email_split
 # for the api
 import json
 
@@ -28,46 +32,76 @@ import logging
 
 app = Flask(__name__)
 
-# Just that we have a start page for the web application
-@app.route("/")
-def hello():
-    
-    # https://www.tutorialspoint.com/flask/flask_templates.htm
-    app.logger.info("hello called")
+@app.route('/api/v1/verify', methods=['GET'])
+def check1():
+  args = request.args
+  email = args.get("email")
+  #Step 1: Check email
+  #Check using Regex that an email meets minimum requirements, throw an error if not
+  addressToVerify = email
+  match = re.match(
+    '^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,4})$',
+    addressToVerify)
 
-    return render_template("hello.html"),200
+  if match == None:
+    print('Bad Syntax in ' + addressToVerify)
+    rzlt = {"email": email, "status": "invalid", "reason": "bad_syntax"}
+    return jsonify(rzlt)
+    #pass
 
-# The api method. Expects a parameter named "input"
-@app.route("/api", methods=["GET"])
-def api():
+  #Step 2: Getting MX record
+  #socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, "89.47.234.26", 1085)
+  #socket.socket = socks.socksocket
+  #socks.wrapmodule(smtplib)
+  #Pull domain name from email address
+  domain_name = email.split('@')[1]
 
-    retdict ={} 
+  #get the MX record for the domain
+  try:
+    records = dns.resolver.resolve(domain_name, 'MX')
+    mxRecord = records[0].exchange
+    mxRecord = str(mxRecord)
+  except dns.resolver.NoAnswer:
+    rzlt = {"email": email, "status": "invalid", "reason": "no_record_found"}
+    return jsonify(rzlt)
 
-    try:
-        input_string = request.args.get("input","[you forgot to feed in input]")
-        app.logger.info("FAKE API CALL, input = "+input_string)
+  #Step 3: ping email server
+  #check if the email address exists
 
-        response = {
-            'input':input_string,
-            'my_api_output':"hello api "+input_string
-        } 
-        
-        retdict['response']=response
+  # Get local server hostname
+  host = socket.gethostname()
+  host = host.replace('776', f'{random.randint(100,999)}')
+  print(host)
 
-    except Exception as e:
-        msg = "Bad Request (400): "+str(e)
-        app.logger.info(msg)
-        # print(msg)
-        return msg,400
-    
-    retJson = json.dumps(retdict)
-    app.logger.info("retjson :"+retJson)
+  # SMTP lib setup (use debug level for full output)
+  server = smtplib.SMTP()
+  server.set_debuglevel(1)
 
-    resp = make_response(retJson)
-    resp.headers['content-type']="application/json"
+  # SMTP Conversation
+  try:
+    server.connect(mxRecord)
+    server.helo("mx4.abv.bg")
+    server.mail('mail@sendgrid.com')
+    code, message = server.rcpt(str(addressToVerify))
+    server.quit()
+  except smtplib.SMTPServerDisconnected:
+    print('heated up')
+    time.sleep(10)
+    code = 666
 
-    # http://www.flaskapi.org/api-guide/status-codes/#successful-2xx
-    return resp, 200
+  # Assume 250 as Success
+  if code == 250:
+    print(code)
+    rzlt = {"email": email, "status": "valid", "reason": "accepted_email"}
+    return jsonify(rzlt)
+  elif code == 666:
+    print('smtp error; status: unknown')
+    rzlt = {"email": email, "status": "invalid", "reason": "smtp_error"}
+    return jsonify(rzlt)
+  else:
+    print(code)
+    rzlt = {"email": email, "status": "invalid", "reason": "invalid_email"}
+    return jsonify(rzlt)
 
 #############################################
 # MAIN
